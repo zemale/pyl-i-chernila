@@ -10,6 +10,7 @@ var overlay = document.getElementById('overlay');
 var toastEl = document.getElementById('toast');
 
 var BOOKS = (window.PC_BOOKS || []).slice();
+var RX = window.PC_RX || {};
 var byId = {};
 BOOKS.forEach(function(b){ byId[b.id] = b; });
 
@@ -19,9 +20,39 @@ function load(){
     var o = JSON.parse(localStorage.getItem(LS));
     if (o && o.runs && typeof o.runs === 'object') return o;
   } catch(e){}
-  return { runs:{}, last:null, v:2 };
+  return { runs:{}, last:null, v:3, modes:{} };
 }
 function save(){ try { localStorage.setItem(LS, JSON.stringify(st)); } catch(e){} }
+function modeOf(id){ return st.modes && st.modes[id] === 'free' ? 'free' : 'classic'; }
+function setMode(id, m){ st.modes = st.modes || {}; st.modes[id] = m === 'free' ? 'free' : 'classic'; save(); }
+function rxOf(b, scIdx, optIdx, roleIdx){
+  var pack = RX[b.id];
+  if (!pack || !pack.rx) return null;
+  var arr = pack.rx[scIdx];
+  if (!arr) return null;
+  var cell = arr[optIdx];
+  if (typeof cell === 'string') return cell;
+  if (cell && typeof cell[roleIdx] === 'string') return cell[roleIdx];
+  return null;
+}
+function branchOf(b){ var pack = RX[b.id]; return pack && pack.br ? pack.br : null; }
+function finOf(b, br){
+  var pack = RX[b.id];
+  if (!pack || !pack.fin) return null;
+  return pack.fin[br] || pack.fin.none || null;
+}
+function sceneTextOf(b, si, br){
+  var pack = RX[b.id];
+  if (!pack || !pack.bt) return null;
+  var row = pack.bt[si];
+  if (!row) return null;
+  return row[br] || null;
+}
+function exOf(b, ci){
+  var pack = RX[b.id];
+  if (!pack || !pack.ex) return null;
+  return typeof pack.ex[ci] === 'string' ? pack.ex[ci] : null;
+}
 
 var cur = null; // { book, run, phase, react }
 
@@ -36,7 +67,7 @@ function num(n){ return n>0 ? '+'+n : String(n); }
 function fill(tpl, name){ return String(tpl).replace('{n}', name || 'кто-то'); }
 
 function freshRun(role){
-  return { i:0, susp:0, rel:{}, last:{}, found:false, out:'', done:false, caught:0, burned:{}, seen:0, role: role|0, lastName:'' };
+  return { i:0, susp:0, rel:{}, last:{}, found:false, out:'', done:false, caught:0, burned:{}, seen:0, role: role|0, lastName:'', branch:'', told:0, hot:0 };
 }
 function relOf(run, idx){
   var k = String(idx);
@@ -99,11 +130,15 @@ function renderShelf(){
     '<h1 class="brand">Пыль и чернила</h1>' +
     '<p class="brand-lead">Ты открываешь книгу — и оказываешься <em>внутри</em>. Сначала выбери, <b>кто ты в этом мире</b>: от этого зависит, как тебя встретят. Потом найди закладку и уйди так, чтобы никто не догадался, что ты из будущего.</p>' +
     '<div class="brand-stats"><span><b>'+BOOKS.length+'</b> книг</span><span><b>'+totalScenes+'</b> сцен</span><span><b>'+doneCount+'</b> пройдено</span></div>' +
+    '<div class="modebox"><span class="kicker">режим игры</span><div class="modes">' +
+      '<button class="modebtn'+(modeOf()==='classic'?' on':'')+'" data-act="mode" data-m="classic"><b>Классический</b><span>прокол — и тебя вернут на шаг назад</span></button>' +
+      '<button class="modebtn'+(modeOf()==='free'?' on':'')+'" data-act="mode" data-m="free"><b>Свободный</b><span>тебя раскрыли — играешь дальше без маски</span></button>' +
+    '</div></div>' +
     '<details class="howto"><summary>Как это играется</summary><ul>' +
       '<li>Перед входом ты выбираешь <b>роль</b> — кто ты в этом мире. Роль меняет начало, отношение к тебе и то, какие поступки тебе доступны.</li>' +
       '<li>История идёт одним путём: каждая сцена <b>вытекает из предыдущей</b>, а не начинается с чистого листа.</li>' +
       '<li>В каждой сцене — три варианта. Мягкий почти не вызывает подозрений, резкий вызывает, а неосторожная фраза из будущего — сильно.</li>' +
-      '<li>Подозрение видно по <b>глазу</b> в углу. Переполнилось — тебя раскусили, но игра вернёт на шаг назад.</li>' +
+      '<li>Подозрение видно по <b>глазу</b> в углу. Переполнилось — тебя раскусили: в <b>классическом</b> режиме вернут на шаг назад, в <b>свободном</b> маска спадает, и каждый персонаж реагирует по-своему — но игра идёт дальше.</li>' +
       '<li>Ближе к середине книги спрятана <b>закладка</b>. С ней появляется кнопка «уйти» — тихо получится, только если подозрение низкое.</li>' +
       '<li>Можно уйти сразу, а можно <b>доиграть книгу до конца</b> — в финале будет видно, кто тебя запомнил.</li>' +
     '</ul></details>' +
@@ -189,6 +224,10 @@ function renderRoles(id){
       '<div class="kicker">перед входом в «'+esc(b.title)+'»</div>' +
       '<h2>Кто ты в этом мире?</h2>' +
       '<p class="about">Роль — это не маска на минуту. От неё зависит, с чего начнётся история, как к тебе отнесутся и какие слова тебе вообще можно говорить. Обратно поменять нельзя.</p>' +
+      '<div class="modebox"><span class="kicker">режим для этой книги</span><div class="modes">' +
+        '<button class="modebtn'+(modeOf(id)==='classic'?' on':'')+'" data-act="bmode" data-id="'+esc(id)+'" data-m="classic"><b>Классический</b><span>поймали — вернут на страницу назад</span></button>' +
+        '<button class="modebtn'+(modeOf(id)==='free'?' on':'')+'" data-act="bmode" data-id="'+esc(id)+'" data-m="free"><b>Свободный</b><span>поймали — играешь дальше, но относятся иначе</span></button>' +
+      '</div></div>' +
       '<div class="roles">'+cards+'</div>' +
     '</div></section>';
   window.scrollTo(0,0);
@@ -242,14 +281,16 @@ function renderScene(){
       '<button class="back" data-act="shelf">←</button>' +
       '<div><div class="bk">'+esc(b.title)+'</div><div class="pg">'+esc(role.n)+' · стр. '+(r.i+1)+' / '+total+'</div></div>' +
       '<div class="sp"></div>' +
+      '<button class="modepill'+(modeOf(b.id)==='free'?' free':'')+'" data-act="bmode" title="Сменить режим">'+(modeOf(b.id)==='free'?'свободный':'классический')+'</button>' +
       '<div class="eye'+(eyeOn?' on':'')+'" title="Подозрение"><span class="gl">👁</span>'+pipsHtml(r.susp)+'</div>' +
       '<button class="leave'+(r.found?' on':'')+'" data-act="leave">Уйти по закладке</button>' +
     '</div>';
 
   var lead = leadOf(b, r, sc);
+  var alt = sceneTextOf(b, r.i, r.branch);
   var head = '<div class="place">'+esc(sc.p)+'</div>' +
     (lead ? '<p class="lead">'+esc(lead)+'</p>' : '') +
-    '<p class="stext">'+esc(sc.s)+'</p>';
+    '<p class="stext">'+esc(alt || sc.s)+'</p>';
 
   var body = '';
   if (cur.phase === 'choice'){
@@ -295,19 +336,26 @@ function pick(i){
   r.lastName = name;
   r.last[String(ci)] = { d:dR, text:o[0] };
 
-  var line = pickOne(RE[risk], hash(b.id + r.i + i + name));
+  var line = rxOf(b, r.i, i, r.role) || pickOne(RE[risk], hash(b.id + r.i + i + name));
   line = line.replace('{n}', name);
 
   r.burned[r.i+':'+i] = 1;
+  applyBranch(b, r, r.i, i, o[0]);
 
-  // caught?
-  if (r.susp >= CATCH_AT){
+  // caught? — только в классическом режиме
+  if (modeOf(b.id) === 'classic' && r.susp >= CATCH_AT){
     r.caught++;
     cur.phase = 'react';
     cur.react = { name:name, line:line, dRel:dR, dSusp:dS, found:false };
     save();
     showCaught(b, r, name, line, i);
     return;
+  }
+  // свободный режим: подозрение упирается в потолок, но игра идёт дальше
+  if (modeOf(b.id) === 'free' && r.susp >= CATCH_AT){
+    r.hot = (r.hot|0) + 1;
+    addRel(r, ci, -1);
+    dR = dR - 1;
   }
 
   cur.phase = 'react';
@@ -319,6 +367,18 @@ function pick(i){
   if (parts.length) toast(parts);
 }
 
+function applyBranch(b, r, si, oi, text){
+  var row = branchOf(b);
+  var flag = row && row[si] ? row[si][oi] : null;
+  if (flag){
+    r.bs = r.bs || {};
+    r.bs[flag] = (r.bs[flag]|0) + 1;
+    var best = '', n = -1;
+    Object.keys(r.bs).forEach(function(k){ if (r.bs[k] > n){ n = r.bs[k]; best = k; } });
+    r.branch = best;
+  }
+  if (/будущ|в моё время|в моём времени|в нашем веке|через двести лет|я не отсюда|из другого времени/i.test(text)) r.told = 1;
+}
 function showCaught(b, r, name, line, i){
   overlay.hidden = false;
   overlay.innerHTML = '<div class="modal">' +
@@ -327,6 +387,22 @@ function showCaught(b, r, name, line, i){
     '<p>'+esc(name)+' смотрит в упор. Ты сказала лишнее — и это заметили. Но страница ещё не перевёрнута: можно вернуться и сыграть иначе.</p>' +
     '<button class="btn" data-act="retry" data-i="'+i+'">Вернуться на шаг назад</button>' +
   '</div>';
+}
+function showExposed(b, r, name, ci){
+  var line = exOf(b, ci) || esc(name)+' больше не сводит с тебя глаз: «Вы не та, за кого себя выдаёте».';
+  overlay.hidden = false;
+  overlay.innerHTML = '<div class="modal">' +
+    '<div class="kicker">тебя раскрыли</div>' +
+    '<h3>Маска спала</h3>' +
+    '<p style="font-family:var(--serif);font-size:18px;line-height:1.65;color:var(--paper)">'+esc(line)+'</p>' +
+    '<p>Ты не отступила — и теперь все знают, что ты чужая. Книга не закрылась: играй дальше такой, какая ты есть.</p>' +
+    '<button class="btn" data-act="keepgoing">Играть дальше</button>' +
+  '</div>';
+}
+function keepGoing(){
+  overlay.hidden = true;
+  overlay.innerHTML = '';
+  renderScene();
 }
 function retry(){
   overlay.hidden = true;
@@ -360,8 +436,8 @@ function next(){
 function leave(){
   if (!cur || !cur.run.found) return;
   var r = cur.run;
-  var clean = r.susp <= 3;
-  r.out = clean ? 'quiet' : 'noticed';
+  var clean = r.susp <= 3 && !r.exposed;
+  r.out = r.exposed ? 'exposed' : (clean ? 'quiet' : 'noticed');
   r.done = true;
   if (!clean){
     cur.book.cast.forEach(function(c, idx){ addRel(r, idx, -1); });
@@ -371,6 +447,11 @@ function leave(){
 }
 
 /* ───────── final ───────── */
+function toldLine(b, r){
+  var pack = RX[b.id];
+  if (pack && pack.told) return pack.told;
+  return 'Ты рассказала, откуда ты, — и тебя сочли странной. Но запомнили именно такой.';
+}
 function tier(v){
   if (v >= 4) return { t:'скучает по тебе', c:'warm' };
   if (v >= 2) return { t:'относится тепло', c:'warm' };
@@ -384,7 +465,12 @@ function renderFinal(){
   var role = b.roles[r.role] || {n:'читательница', out:''};
   var outLine = r.out === 'quiet' ? 'Ты ушла тихо. Никто не обернулся — только пыль осела на полке.'
     : r.out === 'noticed' ? 'Ты ушла, но тебя хватились. Кто-то долго смотрел на пустое место между страницами.'
+    : r.out === 'exposed' ? 'Ты ушла, не прячась. За тобой смотрели все — и никто не посмел остановить.'
     : 'Ты дочитала книгу до последней страницы. Персонажи остались там, где им и место.';
+  var fin = finOf(b, r.branch);
+  var modeLine = modeOf(b.id) === 'free'
+    ? (r.hot ? 'Тебя подозревали — а ты не отступила ни разу.' : 'Ты прошла книгу, ни разу не попавшись.')
+    : '';
 
   var rows = b.cast.map(function(c, idx){
     var v = relOf(r, idx), t = tier(v), last = r.last[String(idx)];
@@ -403,10 +489,14 @@ function renderFinal(){
     '<div class="by">ты была здесь: '+esc(role.n)+'</div>' +
     '<p class="sub">'+esc(role.out)+'</p>' +
     '<p class="sub">'+esc(outLine)+'</p>' +
+    (fin ? '<p class="sub final-line">'+esc(fin)+'</p>' : '') +
+    (r.told ? '<p class="sub mode-note">'+esc(toldLine(b, r))+'</p>' : '') +
+    (modeLine ? '<p class="sub mode-note">'+esc(modeLine)+'</p>' : '') +
     '<div class="fstats">' +
       '<div><b>'+(r.i+1)+' / '+total+'</b>сцен</div>' +
       '<div><b>'+r.caught+'</b>'+(r.caught===1?'прокол':'проколов')+'</div>' +
       '<div><b>'+(r.found?'найдена':'—')+'</b>закладка</div>' +
+      '<div><b>'+(r.told?'говорила':'молчала')+'</b>о будущем</div>' +
     '</div>' +
     '<div class="kicker" style="margin-bottom:12px">кто как к тебе относится</div>' +
     '<div class="rels">'+rows+'</div>' +
@@ -429,6 +519,11 @@ document.addEventListener('click', function(e){
   else if (act === 'next'){ next(); }
   else if (act === 'leave'){ leave(); }
   else if (act === 'retry'){ retry(); }
+  else if (act === 'keepgoing'){ keepGoing(); }
+  else if (act === 'bmode'){
+    var bid = el.getAttribute('data-id') || (cur ? cur.book.id : null);
+    if (bid){ setMode(bid, el.getAttribute('data-m')); if (cur && cur.book.id === bid) renderScene(); else if (el.getAttribute('data-id')) renderRoles(bid); else renderShelf(); }
+  }
 });
 document.addEventListener('keydown', function(e){
   if (!cur || cur.phase !== 'choice') return;
