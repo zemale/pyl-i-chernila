@@ -1,0 +1,403 @@
+/* «Пыль и чернила» — движок литературных квестов */
+(function(){
+'use strict';
+
+var LS = 'pc.v1';
+var SUSP_MAX = 9, CATCH_AT = 7, REL_MIN = -5, REL_MAX = 5;
+
+var app = document.getElementById('app');
+var overlay = document.getElementById('overlay');
+var toastEl = document.getElementById('toast');
+
+var BOOKS = (window.PC_BOOKS || []).slice();
+var byId = {};
+BOOKS.forEach(function(b){ byId[b.id] = b; });
+
+var st = load();
+function load(){
+  try {
+    var o = JSON.parse(localStorage.getItem(LS));
+    if (o && o.runs && typeof o.runs === 'object') return o;
+  } catch(e){}
+  return { runs:{}, last:null, v:1 };
+}
+function save(){ try { localStorage.setItem(LS, JSON.stringify(st)); } catch(e){} }
+
+var cur = null; // { book, run, phase, react }
+
+/* ───────── helpers ───────── */
+function esc(s){
+  return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; });
+}
+function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
+function hash(str){ var h=0; for(var i=0;i<str.length;i++){ h=(h*31+str.charCodeAt(i))|0; } return Math.abs(h); }
+function pickOne(arr, seed){ return arr[seed % arr.length]; }
+function num(n){ return n>0 ? '+'+n : String(n); }
+
+function freshRun(){
+  return { i:0, susp:0, rel:{}, last:{}, found:false, out:'', done:false, caught:0, burned:{}, seen:0 };
+}
+function relOf(run, idx){
+  var k = String(idx);
+  return typeof run.rel[k] === 'number' ? run.rel[k] : 0;
+}
+function addRel(run, idx, d){
+  run.rel[String(idx)] = clamp(relOf(run, idx) + d, REL_MIN, REL_MAX);
+}
+
+var RE = {
+  0: ['{n} смотрит мягче — и кивает.','{n} тихо благодарит, пряча улыбку.','{n} запоминает это надолго, хоть и молчит.','{n} отвечает теплее, чем ждала.'],
+  1: ['{n} пожимает плечами: «Как знаете».','{n} кивает, но не отводит глаз.','{n} молчит чуть дольше, чем нужно.','{n} делает вид, что не расслышал.'],
+  2: ['{n} резко оборачивается: «Что вы себе позволяете?»','{n} поджимает губы и отступает на шаг.','{n} смотрит так, будто её ударили.','{n} цедит сквозь зубы: «Любопытно».'],
+  3: ['{n} замирает: «Повторите?»','{n} медленно переводит взгляд на твои руки.','{n} отшатывается: «Вы... откуда вы это знаете?»','{n} щурится: «Так в наше время не говорят».']
+};
+var SUSP_D = {0:-1, 1:1, 2:2, 3:3};
+var REL_D  = {0:2, 1:0, 2:-2, 3:-1};
+
+/* ───────── dust ───────── */
+(function dust(){
+  var el = document.getElementById('dust');
+  if (!el) return;
+  var html = '';
+  for (var i=0;i<24;i++){
+    var l = Math.random()*100, d = 14+Math.random()*22, dl = -Math.random()*26, o = .25+Math.random()*.5, s = .7+Math.random()*1.6;
+    html += '<i style="left:'+l.toFixed(1)+'%;bottom:-6vh;opacity:'+o.toFixed(2)+';animation-duration:'+d.toFixed(1)+'s;animation-delay:'+dl.toFixed(1)+'s;transform:scale('+s.toFixed(2)+')"></i>';
+  }
+  el.innerHTML = html;
+})();
+
+/* ───────── toast ───────── */
+var toastTimer = null;
+function toast(parts){
+  if (!toastEl) return;
+  toastEl.innerHTML = parts.map(function(p){
+    return '<span>'+(p.up ? '<b>'+esc(p.n)+' +'+p.d+'</b>' : '<b>'+esc(p.n)+' '+p.d+'</b>')+'</span>';
+  }).join('');
+  toastEl.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ toastEl.classList.remove('on'); }, 2600);
+}
+
+/* ───────── shelf ───────── */
+function progressOf(b){
+  var r = st.runs[b.id];
+  if (!r) return null;
+  if (r.done) return 'done';
+  return 'prog';
+}
+function renderShelf(){
+  cur = null;
+  var groups = {};
+  BOOKS.forEach(function(b){ (groups[b.cat] = groups[b.cat] || []).push(b); });
+  var cats = Object.keys(groups);
+  var totalScenes = BOOKS.reduce(function(a,b){ return a + b.scenes.length; }, 0);
+  var doneCount = BOOKS.filter(function(b){ var r=st.runs[b.id]; return r && r.done; }).length;
+
+  var html = '<section class="shelf-head">' +
+    '<div class="kicker brand-sub">библиотека литературных квестов</div>' +
+    '<h1 class="brand">Пыль и чернила</h1>' +
+    '<p class="brand-lead">Ты открываешь книгу — и оказываешься <em>внутри</em>. Найди закладку и уйди так, чтобы никто не догадался, что ты из будущего.</p>' +
+    '<div class="brand-stats"><span><b>'+BOOKS.length+'</b> книг</span><span><b>'+totalScenes+'</b> сцен</span><span><b>'+doneCount+'</b> пройдено</span></div>' +
+    '<details class="howto"><summary>Как это играется</summary><ul>' +
+      '<li>В каждой сцене — <b>три варианта</b>. Мягкий почти не вызывает подозрений, резкий вызывает, а неосторожная фраза из будущего — сильно.</li>' +
+      '<li>Подозрение видно по <b>глазу</b> в углу: он появляется после первого прокола. Переполнилось — тебя раскусили, но игра вернёт на шаг назад.</li>' +
+      '<li>Где-то в середине книги спрятана <b>закладка</b>. С ней появляется кнопка «уйти». Уйти тихо получится, только если подозрение низкое.</li>' +
+      '<li>Можно уйти сразу, а можно <b>остаться и доиграть</b> книгу до конца — тогда в конце будет видно, кто тебя запомнил.</li>' +
+    '</ul></details>' +
+  '</section>';
+
+  if (st.last && byId[st.last] && st.runs[st.last] && !st.runs[st.last].done){
+    var lb = byId[st.last], lr = st.runs[st.last];
+    html += '<div style="max-width:760px;margin:26px auto 0;display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:14px 18px;border:1px solid rgba(201,162,39,.22);background:rgba(201,162,39,.04)">' +
+      '<span style="font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)">остановилась на «'+esc(lb.title)+'», стр. '+(lr.i+1)+'</span>' +
+      '<button class="btn" data-act="open" data-id="'+esc(lb.id)+'" data-go="1">Продолжить</button></div>';
+  }
+
+  cats.forEach(function(cat){
+    html += '<section class="case"><div class="shelf-label"><span>'+esc(cat)+'</span><i></i><em>'+groups[cat].length+' книг</em></div><div class="grid">';
+    groups[cat].forEach(function(b){
+      var p = progressOf(b), badge = '';
+      if (p === 'done') badge = '<span class="badge done">пройдено</span>';
+      else if (p === 'prog') badge = '<span class="badge prog">стр. '+(st.runs[b.id].i+1)+'</span>';
+      html += '<button class="cover" data-act="open" data-id="'+esc(b.id)+'" style="--c1:'+b.c1+';--c2:'+b.c2+'">' +
+        '<span class="cy">'+esc(b.year)+'</span>' +
+        '<span class="ct">'+esc(b.title)+'</span>' +
+        '<span class="orn"></span>' +
+        '<span class="ca">'+esc(b.author)+'</span>' + badge + '</button>';
+    });
+    html += '</div></section>';
+  });
+
+  html += '<p style="text-align:center;color:var(--muted);font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin-top:48px">книги из каталога «Между строк» · прогресс хранится в браузере</p>';
+  app.innerHTML = html;
+  window.scrollTo(0,0);
+}
+
+/* ───────── intro ───────── */
+function renderIntro(id, startNow){
+  var b = byId[id];
+  if (!b) return renderShelf();
+  cur = null;
+  var r = st.runs[id];
+  var canContinue = r && !r.done;
+  var html = '<section class="intro">' +
+    '<div class="intro-cover" style="--c1:'+b.c1+';--c2:'+b.c2+'">' +
+      '<div class="ct">'+esc(b.title)+'</div>' +
+      '<div class="ca">'+esc(b.author)+'</div>' +
+    '</div>' +
+    '<div class="intro-body">' +
+      '<button class="back" data-act="shelf">← в библиотеку</button>' +
+      '<h2>'+esc(b.title)+'</h2>' +
+      '<div class="by">'+esc(b.author)+' · '+esc(b.year)+' · '+esc(b.tone)+'</div>' +
+      '<p class="about">'+esc(b.about)+'</p>' +
+      '<div class="who"><span>кто ты здесь</span>'+esc(b.who)+'</div>' +
+      '<div class="chips"><span class="chip">'+b.scenes.length+' сцен</span><span class="chip">'+b.cast.length+' персонажа</span><span class="chip">закладка спрятана</span></div>' +
+      '<div class="intro-actions">' +
+        (canContinue
+          ? '<button class="btn" data-act="resume" data-id="'+esc(id)+'">Продолжить со стр. '+(r.i+1)+'</button><button class="btn ghost" data-act="begin" data-id="'+esc(id)+'">Начать заново</button>'
+          : '<button class="btn" data-act="begin" data-id="'+esc(id)+'">Войти в книгу</button>') +
+      '</div>' +
+    '</div></section>';
+  app.innerHTML = html;
+  window.scrollTo(0,0);
+  if (startNow) begin(id);
+}
+
+/* ───────── game ───────── */
+function begin(id){
+  var b = byId[id];
+  if (!b) return renderShelf();
+  st.runs[id] = freshRun();
+  st.last = id;
+  save();
+  cur = { book:b, run:st.runs[id], phase:'choice' };
+  renderScene();
+}
+function resume(id){
+  var b = byId[id];
+  if (!b || !st.runs[id]) return renderIntro(id);
+  st.last = id; save();
+  cur = { book:b, run:st.runs[id], phase:'choice' };
+  renderScene();
+}
+
+function pipsHtml(susp){
+  var filled = Math.round(susp / (SUSP_MAX/6));
+  var out = '';
+  for (var i=0;i<6;i++){
+    var cls = i < filled ? (i>=4 ? 'on hot' : 'on') : '';
+    out += '<i class="'+cls+'"></i>';
+  }
+  return '<div class="pips">'+out+'</div>';
+}
+
+function renderScene(){
+  var b = cur.book, r = cur.run;
+  var sc = b.scenes[r.i];
+  var total = b.scenes.length;
+  if (sc.bm && !r.found){ r.found = true; save(); }
+  var eyeOn = (r.susp > 0 || r.seen > 0);
+  var hud = '<div class="hud">' +
+      '<button class="back" data-act="shelf">←</button>' +
+      '<div><div class="bk">'+esc(b.title)+'</div><div class="pg">стр. '+(r.i+1)+' / '+total+'</div></div>' +
+      '<div class="sp"></div>' +
+      '<div class="eye'+(eyeOn?' on':'')+'" title="Подозрение"><span class="gl">👁</span>'+pipsHtml(r.susp)+'</div>' +
+      '<button class="leave'+(r.found?' on':'')+'" data-act="leave">Уйти по закладке</button>' +
+    '</div>';
+
+  var body = '';
+  if (cur.phase === 'choice'){
+    body = '<div class="scene"><div class="place">'+esc(sc.p)+'</div>' +
+      '<p class="stext">'+esc(sc.s)+'</p><div class="choices">';
+    sc.o.forEach(function(o, i){
+      var burned = r.burned[r.i+':'+i];
+      body += '<button class="choice" data-act="pick" data-i="'+i+'"'+(burned?' disabled':'')+'>' +
+        '<span class="n">'+(i+1)+'</span><span class="tx">'+esc(o[0])+'</span>' +
+        (burned?'<span class="tag">прокол</span>':'') + '</button>';
+    });
+    body += '</div></div>';
+  } else {
+    var x = cur.react;
+    body = '<div class="scene"><div class="place">'+esc(sc.p)+'</div>' +
+      '<p class="stext">'+esc(sc.s)+'</p>' +
+      '<div class="reaction"><div class="who">'+esc(x.name)+'</div><div class="line">'+esc(x.line)+'</div>' +
+      '<div class="delta">'+ (x.dRel ? '<b class="'+(x.dRel>0?'up':'down')+'">'+esc(x.name)+' '+num(x.dRel)+'</b> · ' : '') + (x.dSusp ? 'подозрение '+num(x.dSusp) : 'подозрение не выросло') + '</div></div>' +
+      (x.found ? '<div class="found">✧ Между страницами — закладка. Теперь можно уйти. ✧</div>' : '') +
+      '<div class="nextrow"><button class="btn" data-act="next">Дальше →</button></div></div>';
+  }
+  app.innerHTML = hud + body;
+  if (cur.phase === 'choice') window.scrollTo({top:0, behavior:'smooth'});
+  else window.scrollTo({top:0, behavior:'smooth'});
+}
+
+function pick(i){
+  if (!cur || cur.phase !== 'choice') return;
+  var b = cur.book, r = cur.run, sc = b.scenes[r.i];
+  var o = sc.o[i];
+  if (!o) return;
+  var risk = o[1] | 0;
+  var ci = o[2] | 0;
+  var name = b.cast[ci] ? b.cast[ci].n : 'Кто-то';
+
+  var dS = SUSP_D[risk], dR = REL_D[risk];
+  var before = r.susp;
+  r.susp = clamp(r.susp + dS, 0, SUSP_MAX);
+  dS = r.susp - before;
+  addRel(r, ci, dR);
+  r.seen++;
+  r.last[String(ci)] = { d:dR, text:o[0] };
+
+  var line = pickOne(RE[risk], hash(b.id + r.i + i + name));
+  line = line.replace('{n}', name);
+
+  r.burned[r.i+':'+i] = 1;
+
+  // caught?
+  if (r.susp >= CATCH_AT){
+    r.caught++;
+    cur.phase = 'react';
+    cur.react = { name:name, line:line, dRel:dR, dSusp:dS, found:false };
+    save();
+    showCaught(b, r, name, line, i);
+    return;
+  }
+
+  // bookmark
+  var justFound = false;
+  cur.phase = 'react';
+  cur.react = { name:name, line:line, dRel:dR, dSusp:dS, found:false };
+  save();
+  renderScene();
+  var parts = [];
+  if (dR) parts.push({ n:name, d:dR, up:dR>0 });
+  if (parts.length) toast(parts);
+}
+
+function showCaught(b, r, name, line, i){
+  overlay.hidden = false;
+  overlay.innerHTML = '<div class="modal">' +
+    '<div class="kicker">тебя раскусили</div>' +
+    '<h3>«Откуда вы это знаете?»</h3>' +
+    '<p>'+esc(name)+' смотрит в упор. Ты сказала лишнее — и это заметили. Но страница ещё не перевёрнута: можно вернуться и сыграть иначе.</p>' +
+    '<button class="btn" data-act="retry" data-i="'+i+'">Вернуться на шаг назад</button>' +
+  '</div>';
+}
+function retry(){
+  overlay.hidden = true;
+  overlay.innerHTML = '';
+  var r = cur.run;
+  r.susp = 3;
+  Object.keys(r.burned).forEach(function(k){ if (k.indexOf(r.i + ':') === 0) delete r.burned[k]; });
+  cur.phase = 'choice';
+  cur.react = null;
+  save();
+  renderScene();
+}
+
+function next(){
+  if (!cur) return;
+  var b = cur.book, r = cur.run;
+  if (r.i + 1 >= b.scenes.length){
+    r.done = true; r.out = 'end';
+    save();
+    renderFinal();
+    return;
+  }
+  r.i++;
+  cur.phase = 'choice';
+  cur.react = null;
+  save();
+  renderScene();
+}
+
+function leave(){
+  if (!cur || !cur.run.found) return;
+  var r = cur.run;
+  var clean = r.susp <= 3;
+  r.out = clean ? 'quiet' : 'noticed';
+  r.done = true;
+  if (!clean){
+    cur.book.cast.forEach(function(c, idx){ addRel(r, idx, -1); });
+  }
+  save();
+  renderFinal();
+}
+
+/* ───────── final ───────── */
+function tier(v){
+  if (v >= 4) return { t:'скучает по тебе', c:'warm' };
+  if (v >= 2) return { t:'относится тепло', c:'warm' };
+  if (v >= 0) return { t:'нейтрально', c:'calm' };
+  if (v >= -2) return { t:'настороже', c:'cold' };
+  return { t:'злится', c:'angry' };
+}
+function renderFinal(){
+  var b = cur.book, r = cur.run;
+  var total = b.scenes.length;
+  var outLine = r.out === 'quiet' ? 'Ты ушла тихо. Никто не обернулся — только пыль осела на полке.'
+    : r.out === 'noticed' ? 'Ты ушла, но тебя хватились. Кто-то долго смотрел на пустое место между страницами.'
+    : 'Ты дочитала книгу до последней страницы. Персонажи остались там, где им и место.';
+
+  var rows = b.cast.map(function(c, idx){
+    var v = relOf(r, idx), t = tier(v), last = r.last[String(idx)];
+    var w = clamp(Math.abs(v) * 10, 4, 50);
+    var left = v >= 0 ? 50 : 50 - w;
+    return '<div class="rel"><div class="nm">'+esc(c.n)+'</div><div class="tier '+t.c+'">'+t.t+'</div>' +
+      '<div class="bar"><i style="--v:'+Math.abs(v)+';left:'+left+'%;width:'+w+'%"></i></div>' +
+      (last ? '<div class="why">'+(last.d<0?'после':'после')+' «'+esc(last.text)+'»</div>' : '<div class="why">вы почти не пересекались</div>') +
+      '</div>';
+  }).join('');
+
+  app.innerHTML = '<section class="final">' +
+    '<button class="back" data-act="shelf">← в библиотеку</button>' +
+    '<div class="kicker">книга закрыта</div>' +
+    '<h2>'+esc(b.title)+'</h2>' +
+    '<p class="sub">'+esc(outLine)+'</p>' +
+    '<div class="fstats">' +
+      '<div><b>'+(r.i+1)+' / '+total+'</b>сцен</div>' +
+      '<div><b>'+r.caught+'</b>'+(r.caught===1?'прокол':'проколов')+'</div>' +
+      '<div><b>'+(r.found?'найдена':'—')+'</b>закладка</div>' +
+    '</div>' +
+    '<div class="kicker" style="margin-bottom:12px">кто как к тебе относится</div>' +
+    '<div class="rels">'+rows+'</div>' +
+    '<div class="intro-actions"><button class="btn" data-act="shelf">В библиотеку</button><button class="btn ghost" data-act="begin" data-id="'+esc(b.id)+'">Пройти заново</button></div>' +
+  '</section>';
+  window.scrollTo(0,0);
+}
+
+/* ───────── events ───────── */
+document.addEventListener('click', function(e){
+  var el = e.target.closest ? e.target.closest('[data-act]') : null;
+  if (!el || el.disabled) return;
+  var act = el.getAttribute('data-act');
+  if (act === 'open'){ renderIntro(el.getAttribute('data-id'), el.getAttribute('data-go') === '1'); }
+  else if (act === 'shelf'){ renderShelf(); }
+  else if (act === 'begin'){ begin(el.getAttribute('data-id')); }
+  else if (act === 'resume'){ resume(el.getAttribute('data-id')); }
+  else if (act === 'pick'){ pick(parseInt(el.getAttribute('data-i'),10)); }
+  else if (act === 'next'){ next(); }
+  else if (act === 'leave'){ leave(); }
+  else if (act === 'retry'){ retry(); }
+});
+
+document.addEventListener('keydown', function(e){
+  if (!cur || cur.phase !== 'choice') return;
+  if (e.key === '1' || e.key === '2' || e.key === '3'){
+    var idx = parseInt(e.key,10) - 1;
+    var btn = document.querySelector('.choice[data-i="'+idx+'"]');
+    if (btn && !btn.disabled) pick(idx);
+  }
+});
+
+/* ───────── start ───────── */
+renderShelf();
+
+window.PC = {
+  get state(){ return st; },
+  books: BOOKS,
+  open: function(id, go){ renderIntro(id, !!go); },
+  pick: pick, next: next, leave: leave, retry: retry,
+  shelf: renderShelf,
+  current: function(){ return cur; }
+};
+})();
