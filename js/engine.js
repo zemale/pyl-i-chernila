@@ -2,7 +2,7 @@
 (function(){
 'use strict';
 
-var LS = 'pc.v1';
+var LS = 'pc.v2';
 var SUSP_MAX = 9, CATCH_AT = 7, REL_MIN = -5, REL_MAX = 5;
 
 var app = document.getElementById('app');
@@ -19,7 +19,7 @@ function load(){
     var o = JSON.parse(localStorage.getItem(LS));
     if (o && o.runs && typeof o.runs === 'object') return o;
   } catch(e){}
-  return { runs:{}, last:null, v:1 };
+  return { runs:{}, last:null, v:2 };
 }
 function save(){ try { localStorage.setItem(LS, JSON.stringify(st)); } catch(e){} }
 
@@ -33,9 +33,10 @@ function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
 function hash(str){ var h=0; for(var i=0;i<str.length;i++){ h=(h*31+str.charCodeAt(i))|0; } return Math.abs(h); }
 function pickOne(arr, seed){ return arr[seed % arr.length]; }
 function num(n){ return n>0 ? '+'+n : String(n); }
+function fill(tpl, name){ return String(tpl).replace('{n}', name || 'кто-то'); }
 
-function freshRun(){
-  return { i:0, susp:0, rel:{}, last:{}, found:false, out:'', done:false, caught:0, burned:{}, seen:0 };
+function freshRun(role){
+  return { i:0, susp:0, rel:{}, last:{}, found:false, out:'', done:false, caught:0, burned:{}, seen:0, role: role|0, lastName:'' };
 }
 function relOf(run, idx){
   var k = String(idx);
@@ -96,13 +97,15 @@ function renderShelf(){
   var html = '<section class="shelf-head">' +
     '<div class="kicker brand-sub">библиотека литературных квестов</div>' +
     '<h1 class="brand">Пыль и чернила</h1>' +
-    '<p class="brand-lead">Ты открываешь книгу — и оказываешься <em>внутри</em>. Найди закладку и уйди так, чтобы никто не догадался, что ты из будущего.</p>' +
+    '<p class="brand-lead">Ты открываешь книгу — и оказываешься <em>внутри</em>. Сначала выбери, <b>кто ты в этом мире</b>: от этого зависит, как тебя встретят. Потом найди закладку и уйди так, чтобы никто не догадался, что ты из будущего.</p>' +
     '<div class="brand-stats"><span><b>'+BOOKS.length+'</b> книг</span><span><b>'+totalScenes+'</b> сцен</span><span><b>'+doneCount+'</b> пройдено</span></div>' +
     '<details class="howto"><summary>Как это играется</summary><ul>' +
-      '<li>В каждой сцене — <b>три варианта</b>. Мягкий почти не вызывает подозрений, резкий вызывает, а неосторожная фраза из будущего — сильно.</li>' +
-      '<li>Подозрение видно по <b>глазу</b> в углу: он появляется после первого прокола. Переполнилось — тебя раскусили, но игра вернёт на шаг назад.</li>' +
-      '<li>Где-то в середине книги спрятана <b>закладка</b>. С ней появляется кнопка «уйти». Уйти тихо получится, только если подозрение низкое.</li>' +
-      '<li>Можно уйти сразу, а можно <b>остаться и доиграть</b> книгу до конца — тогда в конце будет видно, кто тебя запомнил.</li>' +
+      '<li>Перед входом ты выбираешь <b>роль</b> — кто ты в этом мире. Роль меняет начало, отношение к тебе и то, какие поступки тебе доступны.</li>' +
+      '<li>История идёт одним путём: каждая сцена <b>вытекает из предыдущей</b>, а не начинается с чистого листа.</li>' +
+      '<li>В каждой сцене — три варианта. Мягкий почти не вызывает подозрений, резкий вызывает, а неосторожная фраза из будущего — сильно.</li>' +
+      '<li>Подозрение видно по <b>глазу</b> в углу. Переполнилось — тебя раскусили, но игра вернёт на шаг назад.</li>' +
+      '<li>Ближе к середине книги спрятана <b>закладка</b>. С ней появляется кнопка «уйти» — тихо получится, только если подозрение низкое.</li>' +
+      '<li>Можно уйти сразу, а можно <b>доиграть книгу до конца</b> — в финале будет видно, кто тебя запомнил.</li>' +
     '</ul></details>' +
   '</section>';
 
@@ -134,6 +137,11 @@ function renderShelf(){
 }
 
 /* ───────── intro ───────── */
+function roleHint(r){
+  if (r.s >= 2) return 'на тебя посмотрят с первого шага';
+  if (r.s === 1) return 'тебя заметят, но не сразу';
+  return 'тебя почти не замечают';
+}
 function renderIntro(id, startNow){
   var b = byId[id];
   if (!b) return renderShelf();
@@ -150,27 +158,53 @@ function renderIntro(id, startNow){
       '<h2>'+esc(b.title)+'</h2>' +
       '<div class="by">'+esc(b.author)+' · '+esc(b.year)+' · '+esc(b.tone)+'</div>' +
       '<p class="about">'+esc(b.about)+'</p>' +
-      '<div class="who"><span>кто ты здесь</span>'+esc(b.who)+'</div>' +
-      '<div class="chips"><span class="chip">'+b.scenes.length+' сцен</span><span class="chip">'+b.cast.length+' персонажа</span><span class="chip">закладка спрятана</span></div>' +
+      '<div class="who"><span>кто ты здесь</span>три роли на выбор — выберешь перед входом</div>' +
+      '<div class="chips"><span class="chip">'+b.scenes.length+' сцен</span><span class="chip">'+b.cast.length+' персонажа</span><span class="chip">3 роли</span><span class="chip">закладка спрятана</span></div>' +
       '<div class="intro-actions">' +
         (canContinue
-          ? '<button class="btn" data-act="resume" data-id="'+esc(id)+'">Продолжить со стр. '+(r.i+1)+'</button><button class="btn ghost" data-act="begin" data-id="'+esc(id)+'">Начать заново</button>'
-          : '<button class="btn" data-act="begin" data-id="'+esc(id)+'">Войти в книгу</button>') +
+          ? '<button class="btn" data-act="resume" data-id="'+esc(id)+'">Продолжить со стр. '+(r.i+1)+'</button><button class="btn ghost" data-act="roles" data-id="'+esc(id)+'">Начать заново</button>'
+          : '<button class="btn" data-act="roles" data-id="'+esc(id)+'">Выбрать, кто ты →</button>') +
       '</div>' +
     '</div></section>';
   app.innerHTML = html;
   window.scrollTo(0,0);
-  if (startNow) begin(id);
+  if (startNow && canContinue) resume(id);
+}
+
+/* ───────── roles ───────── */
+function renderRoles(id){
+  var b = byId[id];
+  if (!b) return renderShelf();
+  cur = null;
+  var cards = b.roles.map(function(r, i){
+    return '<button class="rolecard" data-act="role" data-id="'+esc(id)+'" data-r="'+i+'">' +
+      '<span class="rn">'+esc(r.n)+'</span>' +
+      '<span class="rd">'+esc(r.d)+'</span>' +
+      '<span class="rs">'+esc(roleHint(r))+'</span>' +
+    '</button>';
+  }).join('');
+  app.innerHTML = '<section class="intro roles-screen">' +
+    '<div class="intro-body" style="max-width:820px">' +
+      '<button class="back" data-act="open" data-id="'+esc(id)+'">← к книге</button>' +
+      '<div class="kicker">перед входом в «'+esc(b.title)+'»</div>' +
+      '<h2>Кто ты в этом мире?</h2>' +
+      '<p class="about">Роль — это не маска на минуту. От неё зависит, с чего начнётся история, как к тебе отнесутся и какие слова тебе вообще можно говорить. Обратно поменять нельзя.</p>' +
+      '<div class="roles">'+cards+'</div>' +
+    '</div></section>';
+  window.scrollTo(0,0);
 }
 
 /* ───────── game ───────── */
-function begin(id){
+function begin(id, ri){
   var b = byId[id];
   if (!b) return renderShelf();
-  st.runs[id] = freshRun();
+  var role = b.roles[ri|0] || b.roles[0];
+  var r = freshRun(ri);
+  r.susp = clamp(role.s|0, 0, SUSP_MAX);
+  st.runs[id] = r;
   st.last = id;
   save();
-  cur = { book:b, run:st.runs[id], phase:'choice' };
+  cur = { book:b, run:r, phase:'choice' };
   renderScene();
 }
 function resume(id){
@@ -191,43 +225,55 @@ function pipsHtml(susp){
   return '<div class="pips">'+out+'</div>';
 }
 
+function leadOf(b, r, sc){
+  var role = b.roles[r.role] || {start:''};
+  if (r.i === 0) return role.start || '';
+  return sc.b ? fill(sc.b, r.lastName) : '';
+}
+
 function renderScene(){
   var b = cur.book, r = cur.run;
   var sc = b.scenes[r.i];
   var total = b.scenes.length;
   if (sc.bm && !r.found){ r.found = true; save(); }
   var eyeOn = (r.susp > 0 || r.seen > 0);
+  var role = b.roles[r.role] || {n:'читательница'};
   var hud = '<div class="hud">' +
       '<button class="back" data-act="shelf">←</button>' +
-      '<div><div class="bk">'+esc(b.title)+'</div><div class="pg">стр. '+(r.i+1)+' / '+total+'</div></div>' +
+      '<div><div class="bk">'+esc(b.title)+'</div><div class="pg">'+esc(role.n)+' · стр. '+(r.i+1)+' / '+total+'</div></div>' +
       '<div class="sp"></div>' +
       '<div class="eye'+(eyeOn?' on':'')+'" title="Подозрение"><span class="gl">👁</span>'+pipsHtml(r.susp)+'</div>' +
       '<button class="leave'+(r.found?' on':'')+'" data-act="leave">Уйти по закладке</button>' +
     '</div>';
 
+  var lead = leadOf(b, r, sc);
+  var head = '<div class="place">'+esc(sc.p)+'</div>' +
+    (lead ? '<p class="lead">'+esc(lead)+'</p>' : '') +
+    '<p class="stext">'+esc(sc.s)+'</p>';
+
   var body = '';
   if (cur.phase === 'choice'){
-    body = '<div class="scene"><div class="place">'+esc(sc.p)+'</div>' +
-      '<p class="stext">'+esc(sc.s)+'</p><div class="choices">';
+    body = '<div class="scene">' + head + '<div class="choices">';
     sc.o.forEach(function(o, i){
+      if (o[3] !== undefined && (o[3]|0) !== r.role) return;
       var burned = r.burned[r.i+':'+i];
-      body += '<button class="choice" data-act="pick" data-i="'+i+'"'+(burned?' disabled':'')+'>' +
-        '<span class="n">'+(i+1)+'</span><span class="tx">'+esc(o[0])+'</span>' +
+      var mine = o[3] !== undefined;
+      body += '<button class="choice'+(mine?' mine':'')+'" data-act="pick" data-i="'+i+'"'+(burned?' disabled':'')+'>' +
+        '<span class="n">'+esc(mine ? '★' : (i+1))+'</span><span class="tx">'+esc(o[0])+'</span>' +
+        (mine?'<span class="tag role">твоя роль</span>':'') +
         (burned?'<span class="tag">прокол</span>':'') + '</button>';
     });
     body += '</div></div>';
   } else {
     var x = cur.react;
-    body = '<div class="scene"><div class="place">'+esc(sc.p)+'</div>' +
-      '<p class="stext">'+esc(sc.s)+'</p>' +
+    body = '<div class="scene">' + head +
       '<div class="reaction"><div class="who">'+esc(x.name)+'</div><div class="line">'+esc(x.line)+'</div>' +
       '<div class="delta">'+ (x.dRel ? '<b class="'+(x.dRel>0?'up':'down')+'">'+esc(x.name)+' '+num(x.dRel)+'</b> · ' : '') + (x.dSusp ? 'подозрение '+num(x.dSusp) : 'подозрение не выросло') + '</div></div>' +
       (x.found ? '<div class="found">✧ Между страницами — закладка. Теперь можно уйти. ✧</div>' : '') +
       '<div class="nextrow"><button class="btn" data-act="next">Дальше →</button></div></div>';
   }
   app.innerHTML = hud + body;
-  if (cur.phase === 'choice') window.scrollTo({top:0, behavior:'smooth'});
-  else window.scrollTo({top:0, behavior:'smooth'});
+  window.scrollTo({top:0, behavior:'smooth'});
 }
 
 function pick(i){
@@ -235,6 +281,7 @@ function pick(i){
   var b = cur.book, r = cur.run, sc = b.scenes[r.i];
   var o = sc.o[i];
   if (!o) return;
+  if (o[3] !== undefined && (o[3]|0) !== r.role) return;
   var risk = o[1] | 0;
   var ci = o[2] | 0;
   var name = b.cast[ci] ? b.cast[ci].n : 'Кто-то';
@@ -245,6 +292,7 @@ function pick(i){
   dS = r.susp - before;
   addRel(r, ci, dR);
   r.seen++;
+  r.lastName = name;
   r.last[String(ci)] = { d:dR, text:o[0] };
 
   var line = pickOne(RE[risk], hash(b.id + r.i + i + name));
@@ -262,8 +310,6 @@ function pick(i){
     return;
   }
 
-  // bookmark
-  var justFound = false;
   cur.phase = 'react';
   cur.react = { name:name, line:line, dRel:dR, dSusp:dS, found:false };
   save();
@@ -286,7 +332,8 @@ function retry(){
   overlay.hidden = true;
   overlay.innerHTML = '';
   var r = cur.run;
-  r.susp = 3;
+  var role = cur.book.roles[r.role] || {s:0};
+  r.susp = clamp((role.s|0) + 2, 2, 4);
   Object.keys(r.burned).forEach(function(k){ if (k.indexOf(r.i + ':') === 0) delete r.burned[k]; });
   cur.phase = 'choice';
   cur.react = null;
@@ -334,6 +381,7 @@ function tier(v){
 function renderFinal(){
   var b = cur.book, r = cur.run;
   var total = b.scenes.length;
+  var role = b.roles[r.role] || {n:'читательница', out:''};
   var outLine = r.out === 'quiet' ? 'Ты ушла тихо. Никто не обернулся — только пыль осела на полке.'
     : r.out === 'noticed' ? 'Ты ушла, но тебя хватились. Кто-то долго смотрел на пустое место между страницами.'
     : 'Ты дочитала книгу до последней страницы. Персонажи остались там, где им и место.';
@@ -344,7 +392,7 @@ function renderFinal(){
     var left = v >= 0 ? 50 : 50 - w;
     return '<div class="rel"><div class="nm">'+esc(c.n)+'</div><div class="tier '+t.c+'">'+t.t+'</div>' +
       '<div class="bar"><i style="--v:'+Math.abs(v)+';left:'+left+'%;width:'+w+'%"></i></div>' +
-      (last ? '<div class="why">'+(last.d<0?'после':'после')+' «'+esc(last.text)+'»</div>' : '<div class="why">вы почти не пересекались</div>') +
+      (last ? '<div class="why">после «'+esc(last.text)+'»</div>' : '<div class="why">вы почти не пересекались</div>') +
       '</div>';
   }).join('');
 
@@ -352,6 +400,8 @@ function renderFinal(){
     '<button class="back" data-act="shelf">← в библиотеку</button>' +
     '<div class="kicker">книга закрыта</div>' +
     '<h2>'+esc(b.title)+'</h2>' +
+    '<div class="by">ты была здесь: '+esc(role.n)+'</div>' +
+    '<p class="sub">'+esc(role.out)+'</p>' +
     '<p class="sub">'+esc(outLine)+'</p>' +
     '<div class="fstats">' +
       '<div><b>'+(r.i+1)+' / '+total+'</b>сцен</div>' +
@@ -360,7 +410,7 @@ function renderFinal(){
     '</div>' +
     '<div class="kicker" style="margin-bottom:12px">кто как к тебе относится</div>' +
     '<div class="rels">'+rows+'</div>' +
-    '<div class="intro-actions"><button class="btn" data-act="shelf">В библиотеку</button><button class="btn ghost" data-act="begin" data-id="'+esc(b.id)+'">Пройти заново</button></div>' +
+    '<div class="intro-actions"><button class="btn" data-act="shelf">В библиотеку</button><button class="btn ghost" data-act="roles" data-id="'+esc(b.id)+'">Пройти в другой роли</button></div>' +
   '</section>';
   window.scrollTo(0,0);
 }
@@ -372,32 +422,26 @@ document.addEventListener('click', function(e){
   var act = el.getAttribute('data-act');
   if (act === 'open'){ renderIntro(el.getAttribute('data-id'), el.getAttribute('data-go') === '1'); }
   else if (act === 'shelf'){ renderShelf(); }
-  else if (act === 'begin'){ begin(el.getAttribute('data-id')); }
+  else if (act === 'roles'){ renderRoles(el.getAttribute('data-id')); }
+  else if (act === 'role'){ begin(el.getAttribute('data-id'), parseInt(el.getAttribute('data-r'),10)); }
   else if (act === 'resume'){ resume(el.getAttribute('data-id')); }
   else if (act === 'pick'){ pick(parseInt(el.getAttribute('data-i'),10)); }
   else if (act === 'next'){ next(); }
   else if (act === 'leave'){ leave(); }
   else if (act === 'retry'){ retry(); }
 });
-
 document.addEventListener('keydown', function(e){
   if (!cur || cur.phase !== 'choice') return;
-  if (e.key === '1' || e.key === '2' || e.key === '3'){
-    var idx = parseInt(e.key,10) - 1;
-    var btn = document.querySelector('.choice[data-i="'+idx+'"]');
-    if (btn && !btn.disabled) pick(idx);
+  var k = e.key;
+  if (k === '1' || k === '2' || k === '3' || k === '4'){
+    var idx = parseInt(k,10) - 1;
+    var btns = document.querySelectorAll('.choice');
+    var btn = btns[idx];
+    if (btn && !btn.disabled) pick(parseInt(btn.getAttribute('data-i'),10));
   }
 });
 
-/* ───────── start ───────── */
 renderShelf();
 
-window.PC = {
-  get state(){ return st; },
-  books: BOOKS,
-  open: function(id, go){ renderIntro(id, !!go); },
-  pick: pick, next: next, leave: leave, retry: retry,
-  shelf: renderShelf,
-  current: function(){ return cur; }
-};
+window.PC = { shelf: renderShelf, open: renderIntro, begin: begin, pick: pick, next: next, leave: leave, retry: retry, state: function(){ return st; } };
 })();
