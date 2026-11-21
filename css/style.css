@@ -284,3 +284,4 @@ h1.brand{
 .choice.special{border-color:rgba(201,162,39,.45);background:rgba(201,162,39,.07)}
 .choice.special .n{color:var(--gold-2)}
 .choice.special .tag{color:var(--gold-2);border-color:rgba(201,162,39,.4)}
+.choice .tag.streak{color:var(--gold-2);border:none;font-size:12px;padding:0 2px;letter-spacing:0}

@@ -75,6 +75,18 @@ function influHtml(r, pe){
     items.map(function(t){ return '<li>'+esc(t)+'</li>'; }).join('') + '</ul></div>';
 }
 
+function sceneVarOf(b, si, r){
+  var p = pathOf(b);
+  if (!p || !p.sc) return null;
+  for (var i=0;i<p.sc.length;i++){
+    var v = p.sc[i];
+    if ((v.si|0) !== si) continue;
+    if (!checkIf(r, v.if)) continue;
+    return v;
+  }
+  return null;
+}
+
 function doorCfg(b, si){ var p = DOORS[b.id]; return p && p.de ? p.de[si] : null; }
 function extraOf(b, si, r){
   var p = DOORS[b.id];
@@ -344,6 +356,8 @@ function leadOf(b, r, sc){
 function renderScene(){
   var b = cur.book, r = cur.run;
   var sc = b.scenes[r.i];
+  var sv = sceneVarOf(b, r.i, r);
+  var view = sv ? { p:(sv.p||sc.p), s:(sv.s||sc.s), b:(sv.b||sc.b) } : sc;
   var total = b.scenes.length;
   if (sc.bm && !r.found){ r.found = true; save(); }
   var eyeOn = (r.susp > 0 || r.seen > 0);
@@ -357,7 +371,7 @@ function renderScene(){
       '<button class="leave'+(r.found?' on':'')+'" data-act="leave">Уйти по закладке</button>' +
     '</div>';
 
-  var lead = leadOf(b, r, sc);
+  var lead = leadOf(b, r, view);
   var alt = sceneTextOf(b, r.i, r.branch);
   var dcfg = DOORS[b.id] || {};
   var dcfg0 = doorCfg(b, r.i);
@@ -369,9 +383,9 @@ function renderScene(){
     r.echo.shown = 1; save();
   }
   var badP = (dcfg.bad && dcfg.bad.indexOf(r.i) >= 0) ? '<div class="badpaths">Все три пути плохие. Выбирай тот, который сможешь нести.</div>' : '';
-  var head = '<div class="place">'+esc(sc.p)+'</div>' +
+  var head = '<div class="place">'+esc(view.p)+'</div>' +
     (lead ? '<p class="lead">'+esc(lead)+'</p>' : '') +
-    '<p class="stext">'+esc(alt || sc.s)+'</p>';
+    '<p class="stext">'+esc(alt || view.s)+'</p>';
 
   var body = '';
   if (cur.phase === 'door'){
@@ -395,14 +409,17 @@ function renderScene(){
     body = '<div class="scene">' + head +
       (dcfg0 && dcfg0.ask ? '<p class="ask">'+esc(dcfg0.ask)+'</p>' : '') +
       keySign + echoHtml + badP + '<div class="choices">';
+    var pset = pathSets(b, r.i);
     sc.o.forEach(function(o, i){
       if (o[3] !== undefined && (o[3]|0) !== r.role) return;
       var burned = r.burned[r.i+':'+i];
       var mine = o[3] !== undefined;
+      var follows = !burned && pset.some(function(s){ return (s.oi|0) === i && (!s.if || checkIf(r, s.if)); });
       body += '<button class="choice'+(mine?' mine':'')+'" data-act="pick" data-i="'+i+'"'+(burned?' disabled':'')+'>' +
         '<span class="n">'+esc(mine ? '★' : (i+1))+'</span><span class="tx">'+esc((dcfg0 && dcfg0.l && dcfg0.l[i]) || o[0])+'</span>' +
         (mine?'<span class="tag role">твоя роль</span>':'') +
-        (burned?'<span class="tag">прокол</span>':'') + '</button>';
+        (burned?'<span class="tag">прокол</span>':'') +
+        (follows?'<span class="tag streak" title="это ещё отзовётся">✧</span>':'') + '</button>';
     });
     var exN = extraOf(b, r.i, r).length;
     extraOf(b, r.i, r).forEach(function(e, k){
@@ -464,8 +481,8 @@ function pick(i){
 
   r.burned[r.i+':'+i] = 1;
   applyBranch(b, r, r.i, i, text);
-  if (applyPathFlag(b, r, r.i, i)) hintOn = true;
-  if (e && e.k && setFlag(r, e.k, e.w)) hintOn = true;
+  applyPathFlag(b, r, r.i, i);
+  if (e && e.k) setFlag(r, e.k, e.w);
 
   if (door && (door.p || door.s)){
     if (modeOf(b.id) === 'classic' && r.susp >= CATCH_AT){
