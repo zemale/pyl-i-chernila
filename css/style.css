@@ -285,3 +285,13 @@ h1.brand{
 .choice.special .n{color:var(--gold-2)}
 .choice.special .tag{color:var(--gold-2);border-color:rgba(201,162,39,.4)}
 .choice .tag.streak{color:var(--gold-2);border:none;font-size:12px;padding:0 2px;letter-spacing:0}
+.ally{margin:22px 0 6px;padding:16px;border:1px solid rgba(201,162,39,.22);background:rgba(201,162,39,.04)}
+.ally .sub{margin:6px 0 0}
+.whatif-btn{margin:18px 0 0}
+.whatif{margin:16px 0 0;padding:16px;border:1px dashed rgba(241,231,212,.18);background:rgba(0,0,0,.18)}
+.wi-card{padding:10px 0 4px;border-top:1px solid rgba(241,231,212,.1)}
+.wi-card:first-of-type{border-top:none;padding-top:2px}
+.wi-name{font-family:var(--serif);font-size:18px;color:var(--gold-2)}
+.wi-sub{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:8px 0 2px}
+.wi-list{margin:0;padding-left:18px;color:var(--paper);font-size:14px;line-height:1.5}
+.wi-list li{margin:3px 0}

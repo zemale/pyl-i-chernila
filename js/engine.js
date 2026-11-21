@@ -75,6 +75,65 @@ function influHtml(r, pe){
     items.map(function(t){ return '<li>'+esc(t)+'</li>'; }).join('') + '</ul></div>';
 }
 
+function flagSource(b, k){
+  var p = pathOf(b); if (!p) return [];
+  var out = [];
+  (p.set || []).forEach(function(s){
+    if (s.k !== k) return;
+    var sc = b.scenes[s.si|0], o = sc && sc.o && sc.o[s.oi|0];
+    out.push({ si:s.si|0, t:(o && o[0]) || '', need:s.if || null });
+  });
+  (p.gate || []).forEach(function(g){
+    (g.o || []).forEach(function(o){
+      if (o.k !== k) return;
+      out.push({ si:g.si|0, t:o.t || '', need:g.if || null });
+    });
+  });
+  return out;
+}
+
+function bestAlly(b, r){
+  var best = -1, bv = 3;
+  b.cast.forEach(function(c, idx){ var v = relOf(r, idx); if (v > bv){ bv = v; best = idx; } });
+  return best >= 0 ? { ci:best, v:bv, n:b.cast[best].n } : null;
+}
+
+function allyHtml(b, r, ally){
+  if (!ally) return '';
+  var last = r.last[String(ally.ci)];
+  return '<div class="ally"><div class="kicker">кто пришёл</div>' +
+    '<p class="sub">Ты не звала. А '+esc(ally.n)+' — рядом, до последней страницы. Молча, без объяснений: так поступают только те, кому правда не всё равно.</p>' +
+    (last ? '<p class="sub">И '+esc(ally.n)+' помнит твоё: «'+esc(last.text)+'»</p>' : '') +
+    '</div>';
+}
+
+function whatIfHtml(b, r, pe){
+  var p = pathOf(b);
+  if (!p || !p.end || p.end.length < 2) return '';
+  var cards = [];
+  p.end.forEach(function(e){
+    if (e === pe) return;
+    var cond = e.if || {}, miss = [], k;
+    for (k in cond){
+      if (!Object.prototype.hasOwnProperty.call(cond, k)) continue;
+      if ((cond[k]|0) === 1 && !hasFlag(r, k)) miss.push(k);
+    }
+    var rows = miss.map(function(k){
+      var src = flagSource(b, k)[0];
+      var hint = src ? ('сцена ' + ((src.si|0)+1) + (src.t ? ': «'+src.t+'»' : '')) : 'другой путь по книге';
+      return '<li>'+esc(hint)+'</li>';
+    }).join('');
+    cards.push('<div class="wi-card"><div class="wi-name">'+esc(e.n || 'другая концовка')+'</div>' +
+      (miss.length
+        ? '<div class="wi-sub">не хватило:</div><ul class="wi-list">'+rows+'</ul>'
+        : '<div class="wi-sub">ты была в одном шаге — просто повернула иначе.</div>') +
+      '</div>');
+  });
+  if (!cards.length) return '';
+  return '<button class="btn ghost whatif-btn" data-act="whatif">А если бы?</button>' +
+    '<div class="whatif" id="whatif" hidden><div class="kicker">другие концовки этой книги</div>' + cards.join('') + '</div>';
+}
+
 function sceneVarOf(b, si, r){
   var p = pathOf(b);
   if (!p || !p.sc) return null;
@@ -647,6 +706,7 @@ function renderFinal(){
     : r.out === 'exposed' ? 'Ты ушла, не прячась. За тобой смотрели все — и никто не посмел остановить.'
     : 'Ты дочитала книгу до последней страницы. Персонажи остались там, где им и место.';
   var pe = pathEndOf(b, r);
+  var ally = bestAlly(b, r);
   var fin = pe ? null : finOf(b, r.branch);
   var modeLine = modeOf(b.id) === 'free'
     ? (r.hot ? 'Тебя подозревали — а ты не отступила ни разу.' : 'Ты прошла книгу, ни разу не попавшись.')
@@ -673,6 +733,8 @@ function renderFinal(){
     (pe ? '<div class="endcard"><div class="kicker">концовка · '+esc(pe.n)+'</div>' +
       (pe.s || []).map(function(t){ return '<p class="sub">'+esc(t)+'</p>'; }).join('') + '</div>' : '') +
     influHtml(r, pe) +
+    allyHtml(b, r, ally) +
+    whatIfHtml(b, r, pe) +
     (r.told ? '<p class="sub mode-note">'+esc(toldLine(b, r))+'</p>' : '') +
     (modeLine ? '<p class="sub mode-note">'+esc(modeLine)+'</p>' : '') +
     '<div class="fstats">' +
@@ -705,6 +767,10 @@ document.addEventListener('click', function(e){
   else if (act === 'leave'){ leave(); }
   else if (act === 'retry'){ retry(); }
   else if (act === 'keepgoing'){ keepGoing(); }
+  else if (act === 'whatif'){
+    var wi = document.getElementById('whatif');
+    if (wi) wi.hidden = !wi.hidden;
+  }
   else if (act === 'bmode'){
     var bid = el.getAttribute('data-id') || (cur ? cur.book.id : null);
     if (bid){ setMode(bid, el.getAttribute('data-m')); if (cur && cur.book.id === bid) renderScene(); else if (el.getAttribute('data-id')) renderRoles(bid); else renderShelf(); }
