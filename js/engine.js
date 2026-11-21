@@ -12,6 +12,69 @@ var toastEl = document.getElementById('toast');
 var BOOKS = (window.PC_BOOKS || []).slice();
 var RX = window.PC_RX || {};
 var DOORS = window.PC_DOORS || {};
+var PATHS = window.PC_PATHS || {};
+
+/* ── сквозные ветки: метки поступков, условия, концовки ── */
+function pathOf(b){ return b ? (PATHS[b.id] || null) : null; }
+function hasFlag(r, k){ return ((r.flags && r.flags[k]) | 0) > 0; }
+function checkIf(r, cond){
+  if (!cond) return true;
+  for (var k in cond){
+    if (!Object.prototype.hasOwnProperty.call(cond, k)) continue;
+    var need = cond[k] | 0;
+    if (need === 1 && !hasFlag(r, k)) return false;
+    if (need === 0 && hasFlag(r, k)) return false;
+  }
+  return true;
+}
+function setFlag(r, k, w){
+  if (!k) return false;
+  r.flags = r.flags || {};
+  if (r.flags[k]) return false;
+  r.flags[k] = 1;
+  r.trace = r.trace || [];
+  r.trace.push({ k:k, w:w || '' });
+  return true;
+}
+function pathSets(b, si){ var p = pathOf(b); return (p && p.set) ? p.set.filter(function(s){ return (s.si|0) === si; }) : []; }
+function applyPathFlag(b, r, si, oi){
+  var on = false;
+  pathSets(b, si).forEach(function(s){
+    if ((s.oi|0) !== oi) return;
+    if (s.if && !checkIf(r, s.if)) return;
+    if (setFlag(r, s.k, s.w)) on = true;
+  });
+  return on;
+}
+function pathOpts(b, si, r){
+  var p = pathOf(b);
+  if (!p || !p.gate) return [];
+  var out = [];
+  p.gate.forEach(function(g){
+    if ((g.si|0) !== si) return;
+    if (g.if && !checkIf(r, g.if)) return;
+    (g.o || []).forEach(function(o){ out.push(o); });
+  });
+  return out;
+}
+function pathEndOf(b, r){
+  var p = pathOf(b);
+  if (!p || !p.end) return null;
+  for (var i=0;i<p.end.length;i++){ if (checkIf(r, p.end[i].if)) return p.end[i]; }
+  return null;
+}
+function influHtml(r, pe){
+  var seen = {}, items = [];
+  (r.trace || []).forEach(function(t){
+    if (!t.w || seen[t.w]) return;
+    if (pe && pe.if && !Object.prototype.hasOwnProperty.call(pe.if, t.k)) return;
+    seen[t.w] = 1; items.push(t.w);
+  });
+  if (!items.length) return '';
+  return '<div class="influ"><div class="kicker">что решило концовку</div><ul>' +
+    items.map(function(t){ return '<li>'+esc(t)+'</li>'; }).join('') + '</ul></div>';
+}
+
 function doorCfg(b, si){ var p = DOORS[b.id]; return p && p.de ? p.de[si] : null; }
 function extraOf(b, si, r){
   var p = DOORS[b.id];
@@ -75,7 +138,7 @@ function num(n){ return n>0 ? '+'+n : String(n); }
 function fill(tpl, name){ return String(tpl).replace('{n}', name || 'кто-то'); }
 
 function freshRun(role){
-  return { i:0, susp:0, rel:{}, last:{}, found:false, out:'', done:false, caught:0, burned:{}, seen:0, role: role|0, lastName:'', branch:'', told:0, hot:0, doors:0, doorX:null, echo:null };
+  return { i:0, susp:0, rel:{}, last:{}, found:false, out:'', done:false, caught:0, burned:{}, seen:0, role: role|0, lastName:'', branch:'', told:0, hot:0, doors:0, doorX:null, echo:null, flags:{}, trace:[] };
 }
 function relOf(run, idx){
   var k = String(idx);
@@ -341,9 +404,14 @@ function renderScene(){
         (mine?'<span class="tag role">твоя роль</span>':'') +
         (burned?'<span class="tag">прокол</span>':'') + '</button>';
     });
+    var exN = extraOf(b, r.i, r).length;
     extraOf(b, r.i, r).forEach(function(e, k){
       body += '<button class="choice special" data-act="pick" data-i="'+(sc.o.length+k)+'">' +
         '<span class="n">✦</span><span class="tx">'+esc(e.t)+'</span><span class="tag">открылось</span></button>';
+    });
+    pathOpts(b, r.i, r).forEach(function(e, k){
+      body += '<button class="choice branch" data-act="pick" data-i="'+(sc.o.length+exN+k)+'">' +
+        '<span class="n">✧</span><span class="tx">'+esc(e.t)+'</span><span class="tag">твой след</span></button>';
     });
     body += '</div></div>';
   } else {
@@ -351,6 +419,7 @@ function renderScene(){
     body = '<div class="scene">' + head +
       '<div class="reaction"><div class="who">'+esc(x.name)+'</div><div class="line">'+esc(x.line)+'</div>' +
       '<div class="delta">'+ (x.dRel ? '<b class="'+(x.dRel>0?'up':'down')+'">'+esc(x.name)+' '+num(x.dRel)+'</b> · ' : '') + (x.dSusp ? 'подозрение '+num(x.dSusp) : 'подозрение не выросло') + '</div></div>' +
+      (x.hint ? '<div class="hint">✧ это ещё отзовётся</div>' : '') +
       (x.found ? '<div class="found">✧ Между страницами — закладка. Теперь можно уйти. ✧</div>' : '') +
       '<div class="nextrow"><button class="btn" data-act="next">Дальше →</button></div></div>';
   }
@@ -363,7 +432,7 @@ function pick(i){
   var b = cur.book, r = cur.run, sc = b.scenes[r.i];
   var dcfg0 = doorCfg(b, r.i);
   if (dcfg0 && dcfg0.lead) cur.lead = dcfg0.lead;
-  var o, risk, ci, text, door = null;
+  var o, risk, ci, text, door = null, hintOn = false;
   if (i < sc.o.length){
     o = sc.o[i];
     if (!o) return;
@@ -374,6 +443,7 @@ function pick(i){
   } else {
     var exArr = extraOf(b, r.i, r);
     var e = exArr[i - sc.o.length];
+    if (!e) e = pathOpts(b, r.i, r)[i - sc.o.length - exArr.length];
     if (!e) return;
     risk = 1; ci = e.ci | 0; text = e.t; door = e;
   }
@@ -389,11 +459,13 @@ function pick(i){
   r.lastName = name;
   r.last[String(ci)] = { d:dR, text:text };
 
-  var line = rxOf(b, r.i, i, r.role) || pickOne(RE[risk], hash(b.id + r.i + i + name));
+  var line = (e && e.say) ? e.say : (rxOf(b, r.i, i, r.role) || pickOne(RE[risk], hash(b.id + r.i + i + name)));
   line = line.replace('{n}', name);
 
   r.burned[r.i+':'+i] = 1;
   applyBranch(b, r, r.i, i, text);
+  if (applyPathFlag(b, r, r.i, i)) hintOn = true;
+  if (e && e.k && setFlag(r, e.k, e.w)) hintOn = true;
 
   if (door && (door.p || door.s)){
     if (modeOf(b.id) === 'classic' && r.susp >= CATCH_AT){
@@ -430,7 +502,7 @@ function pick(i){
   }
 
   cur.phase = 'react';
-  cur.react = { name:name, line:line, dRel:dR, dSusp:dS, found:false };
+  cur.react = { name:name, line:line, dRel:dR, dSusp:dS, found:false, hint:hintOn };
   save();
   renderScene();
   var parts = [];
@@ -448,6 +520,7 @@ function pickMini(k){
   var name = b.cast[ci] ? b.cast[ci].n : 'Кто-то';
   if (m.dSusp) r.susp = clamp(r.susp + m.dSusp, 0, SUSP_MAX);
   if (m.dRel) addRel(r, ci, m.dRel);
+  if (m.k && setFlag(r, m.k, m.w)) { if (cur.react) cur.react.hint = 1; }
   r.doorX = { k:k, line: m.r || '', name: name };
   save();
   renderScene();
@@ -556,7 +629,8 @@ function renderFinal(){
     : r.out === 'noticed' ? 'Ты ушла, но тебя хватились. Кто-то долго смотрел на пустое место между страницами.'
     : r.out === 'exposed' ? 'Ты ушла, не прячась. За тобой смотрели все — и никто не посмел остановить.'
     : 'Ты дочитала книгу до последней страницы. Персонажи остались там, где им и место.';
-  var fin = finOf(b, r.branch);
+  var pe = pathEndOf(b, r);
+  var fin = pe ? null : finOf(b, r.branch);
   var modeLine = modeOf(b.id) === 'free'
     ? (r.hot ? 'Тебя подозревали — а ты не отступила ни разу.' : 'Ты прошла книгу, ни разу не попавшись.')
     : '';
@@ -579,6 +653,9 @@ function renderFinal(){
     '<p class="sub">'+esc(role.out)+'</p>' +
     '<p class="sub">'+esc(outLine)+'</p>' +
     (fin ? '<p class="sub final-line">'+esc(fin)+'</p>' : '') +
+    (pe ? '<div class="endcard"><div class="kicker">концовка · '+esc(pe.n)+'</div>' +
+      (pe.s || []).map(function(t){ return '<p class="sub">'+esc(t)+'</p>'; }).join('') + '</div>' : '') +
+    influHtml(r, pe) +
     (r.told ? '<p class="sub mode-note">'+esc(toldLine(b, r))+'</p>' : '') +
     (modeLine ? '<p class="sub mode-note">'+esc(modeLine)+'</p>' : '') +
     '<div class="fstats">' +
