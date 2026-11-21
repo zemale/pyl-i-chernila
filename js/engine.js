@@ -11,6 +11,14 @@ var toastEl = document.getElementById('toast');
 
 var BOOKS = (window.PC_BOOKS || []).slice();
 var RX = window.PC_RX || {};
+var DOORS = window.PC_DOORS || {};
+function doorCfg(b, si){ var p = DOORS[b.id]; return p && p.de ? p.de[si] : null; }
+function extraOf(b, si, r){
+  var p = DOORS[b.id];
+  var arr = p && p.extra ? p.extra[si] : null;
+  if (!arr) return [];
+  return arr.filter(function(e){ var n = e.need; if (!n) return true; return relOf(r, n.ci|0) >= (n.rel|0); });
+}
 var byId = {};
 BOOKS.forEach(function(b){ byId[b.id] = b; });
 
@@ -67,7 +75,7 @@ function num(n){ return n>0 ? '+'+n : String(n); }
 function fill(tpl, name){ return String(tpl).replace('{n}', name || 'кто-то'); }
 
 function freshRun(role){
-  return { i:0, susp:0, rel:{}, last:{}, found:false, out:'', done:false, caught:0, burned:{}, seen:0, role: role|0, lastName:'', branch:'', told:0, hot:0 };
+  return { i:0, susp:0, rel:{}, last:{}, found:false, out:'', done:false, caught:0, burned:{}, seen:0, role: role|0, lastName:'', branch:'', told:0, hot:0, doors:0, doorX:null, echo:null };
 }
 function relOf(run, idx){
   var k = String(idx);
@@ -288,21 +296,54 @@ function renderScene(){
 
   var lead = leadOf(b, r, sc);
   var alt = sceneTextOf(b, r.i, r.branch);
+  var dcfg = DOORS[b.id] || {};
+  var dcfg0 = doorCfg(b, r.i);
+  var keyOn = dcfg.key && dcfg.key.indexOf(r.i) >= 0;
+  var keySign = keyOn ? '<div class="keysign">✧ здесь решалась судьба ✧</div>' : '';
+  var echoHtml = '';
+  if (r.echo && r.echo.at === r.i && !r.echo.shown){
+    echoHtml = '<div class="echo"><span>за спиной</span>'+esc(r.echo.text)+'</div>';
+    r.echo.shown = 1; save();
+  }
+  var badP = (dcfg.bad && dcfg.bad.indexOf(r.i) >= 0) ? '<div class="badpaths">Все три пути плохие. Выбирай тот, который сможешь нести.</div>' : '';
   var head = '<div class="place">'+esc(sc.p)+'</div>' +
     (lead ? '<p class="lead">'+esc(lead)+'</p>' : '') +
     '<p class="stext">'+esc(alt || sc.s)+'</p>';
 
   var body = '';
-  if (cur.phase === 'choice'){
-    body = '<div class="scene">' + head + '<div class="choices">';
+  if (cur.phase === 'door'){
+    var d = cur.door;
+    var mini = '';
+    if (d.x && !r.doorX){
+      mini = '<div class="minix">' + d.x.map(function(m,k){
+        return '<button class="choice mini" data-act="mini" data-k="'+k+'"><span class="n">'+(k+1)+'</span><span class="tx">'+esc(m.t)+'</span></button>';
+      }).join('') + '</div>';
+    } else if (r.doorX && r.doorX.line){
+      mini = '<div class="reaction"><div class="who">'+esc(r.doorX.name)+'</div><div class="line">'+esc(r.doorX.line)+'</div></div>';
+    }
+    body = '<div class="scene door">' +
+      (d.p ? '<div class="place">'+esc(d.p)+'</div>' : '') +
+      (d.s || []).map(function(t){ return '<p class="stext">'+esc(t)+'</p>'; }).join('') +
+      mini +
+      (d.x && !r.doorX ? '' : '<div class="nextrow"><button class="btn" data-act="next">Дальше →</button></div>') +
+      '</div>';
+  }
+  else if (cur.phase === 'choice'){
+    body = '<div class="scene">' + head +
+      (dcfg0 && dcfg0.ask ? '<p class="ask">'+esc(dcfg0.ask)+'</p>' : '') +
+      keySign + echoHtml + badP + '<div class="choices">';
     sc.o.forEach(function(o, i){
       if (o[3] !== undefined && (o[3]|0) !== r.role) return;
       var burned = r.burned[r.i+':'+i];
       var mine = o[3] !== undefined;
       body += '<button class="choice'+(mine?' mine':'')+'" data-act="pick" data-i="'+i+'"'+(burned?' disabled':'')+'>' +
-        '<span class="n">'+esc(mine ? '★' : (i+1))+'</span><span class="tx">'+esc(o[0])+'</span>' +
+        '<span class="n">'+esc(mine ? '★' : (i+1))+'</span><span class="tx">'+esc((dcfg0 && dcfg0.l && dcfg0.l[i]) || o[0])+'</span>' +
         (mine?'<span class="tag role">твоя роль</span>':'') +
         (burned?'<span class="tag">прокол</span>':'') + '</button>';
+    });
+    extraOf(b, r.i, r).forEach(function(e, k){
+      body += '<button class="choice special" data-act="pick" data-i="'+(sc.o.length+k)+'">' +
+        '<span class="n">✦</span><span class="tx">'+esc(e.t)+'</span><span class="tag">открылось</span></button>';
     });
     body += '</div></div>';
   } else {
@@ -320,27 +361,57 @@ function renderScene(){
 function pick(i){
   if (!cur || cur.phase !== 'choice') return;
   var b = cur.book, r = cur.run, sc = b.scenes[r.i];
-  var o = sc.o[i];
-  if (!o) return;
-  if (o[3] !== undefined && (o[3]|0) !== r.role) return;
-  var risk = o[1] | 0;
-  var ci = o[2] | 0;
+  var dcfg0 = doorCfg(b, r.i);
+  if (dcfg0 && dcfg0.lead) cur.lead = dcfg0.lead;
+  var o, risk, ci, text, door = null;
+  if (i < sc.o.length){
+    o = sc.o[i];
+    if (!o) return;
+    if (o[3] !== undefined && (o[3]|0) !== r.role) return;
+    risk = o[1] | 0; ci = o[2] | 0; text = o[0];
+    if (dcfg0 && dcfg0.o && dcfg0.o[i]) door = dcfg0.o[i];
+    if (door && door.ci != null) ci = door.ci | 0;
+  } else {
+    var exArr = extraOf(b, r.i, r);
+    var e = exArr[i - sc.o.length];
+    if (!e) return;
+    risk = 1; ci = e.ci | 0; text = e.t; door = e;
+  }
   var name = b.cast[ci] ? b.cast[ci].n : 'Кто-то';
 
-  var dS = SUSP_D[risk], dR = REL_D[risk];
+  var dS = (door && typeof door.dSusp === 'number') ? door.dSusp : SUSP_D[risk];
+  var dR = (door && typeof door.dRel === 'number') ? door.dRel : REL_D[risk];
   var before = r.susp;
   r.susp = clamp(r.susp + dS, 0, SUSP_MAX);
   dS = r.susp - before;
   addRel(r, ci, dR);
   r.seen++;
   r.lastName = name;
-  r.last[String(ci)] = { d:dR, text:o[0] };
+  r.last[String(ci)] = { d:dR, text:text };
 
   var line = rxOf(b, r.i, i, r.role) || pickOne(RE[risk], hash(b.id + r.i + i + name));
   line = line.replace('{n}', name);
 
   r.burned[r.i+':'+i] = 1;
-  applyBranch(b, r, r.i, i, o[0]);
+  applyBranch(b, r, r.i, i, text);
+
+  if (door && (door.p || door.s)){
+    if (modeOf(b.id) === 'classic' && r.susp >= CATCH_AT){
+      r.caught++;
+      cur.phase = 'react';
+      cur.react = { name:name, line:line, dRel:dR, dSusp:dS, found:false };
+      save();
+      showCaught(b, r, name, line, i);
+      return;
+    }
+    r.doors = (r.doors|0) + 1;
+    if (door.echo) r.echo = { at: r.i + 1, text: door.echo, shown: 0 };
+    r.doorX = null;
+    cur.phase = 'door'; cur.door = door; save();
+    renderScene();
+    if (dR) toast([{ n:name, d:dR, up:dR>0 }]);
+    return;
+  }
 
   // caught? — только в классическом режиме
   if (modeOf(b.id) === 'classic' && r.susp >= CATCH_AT){
@@ -365,6 +436,21 @@ function pick(i){
   var parts = [];
   if (dR) parts.push({ n:name, d:dR, up:dR>0 });
   if (parts.length) toast(parts);
+}
+
+function pickMini(k){
+  if (!cur || cur.phase !== 'door' || !cur.door || !cur.door.x) return;
+  var r = cur.run, b = cur.book;
+  if (r.doorX) return;
+  var m = cur.door.x[k];
+  if (!m) return;
+  var ci = m.ci|0;
+  var name = b.cast[ci] ? b.cast[ci].n : 'Кто-то';
+  if (m.dSusp) r.susp = clamp(r.susp + m.dSusp, 0, SUSP_MAX);
+  if (m.dRel) addRel(r, ci, m.dRel);
+  r.doorX = { k:k, line: m.r || '', name: name };
+  save();
+  renderScene();
 }
 
 function applyBranch(b, r, si, oi, text){
@@ -420,6 +506,7 @@ function retry(){
 function next(){
   if (!cur) return;
   var b = cur.book, r = cur.run;
+  if (cur.phase === 'door' && cur.door && cur.door.x && !r.doorX) return;
   if (r.i + 1 >= b.scenes.length){
     r.done = true; r.out = 'end';
     save();
@@ -429,6 +516,8 @@ function next(){
   r.i++;
   cur.phase = 'choice';
   cur.react = null;
+  cur.door = null;
+  r.doorX = null;
   save();
   renderScene();
 }
@@ -497,6 +586,7 @@ function renderFinal(){
       '<div><b>'+r.caught+'</b>'+(r.caught===1?'прокол':'проколов')+'</div>' +
       '<div><b>'+(r.found?'найдена':'—')+'</b>закладка</div>' +
       '<div><b>'+(r.told?'говорила':'молчала')+'</b>о будущем</div>' +
+      '<div><b>'+(r.doors|0)+'</b>развилок</div>' +
     '</div>' +
     '<div class="kicker" style="margin-bottom:12px">кто как к тебе относится</div>' +
     '<div class="rels">'+rows+'</div>' +
@@ -516,6 +606,7 @@ document.addEventListener('click', function(e){
   else if (act === 'role'){ begin(el.getAttribute('data-id'), parseInt(el.getAttribute('data-r'),10)); }
   else if (act === 'resume'){ resume(el.getAttribute('data-id')); }
   else if (act === 'pick'){ pick(parseInt(el.getAttribute('data-i'),10)); }
+  else if (act === 'mini'){ pickMini(parseInt(el.getAttribute('data-k'),10)); }
   else if (act === 'next'){ next(); }
   else if (act === 'leave'){ leave(); }
   else if (act === 'retry'){ retry(); }

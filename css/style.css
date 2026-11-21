@@ -272,3 +272,15 @@ h1.brand{
 .hud .modepill{appearance:none;cursor:pointer;font-family:var(--text);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-2);background:rgba(201,162,39,.08);border:1px solid rgba(201,162,39,.3);padding:5px 9px;margin-right:10px}
 .hud .modepill.free{color:#d8b0b0;border-color:rgba(122,43,43,.7);background:rgba(122,43,43,.16)}
 .final .final-line{font-family:var(--serif);font-size:19px;line-height:1.6;color:var(--paper);border-left:2px solid var(--gold-dim);padding-left:14px;margin:18px 0}
+/* ───── двери-развилки ───── */
+.scene .ask{font-family:var(--serif);font-size:19px;line-height:1.5;color:var(--gold-2);margin:22px 0 4px;padding-left:14px;border-left:2px solid rgba(201,162,39,.45)}
+.scene.door .place{margin-bottom:10px}
+.minix{display:grid;gap:10px;margin:22px 0 6px}
+.choice.mini{padding:12px 14px}
+.keysign{text-align:center;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--gold-2);opacity:.85;margin:20px 0 2px}
+.echo{margin:20px 0 0;padding:14px 16px;border:1px dashed rgba(201,162,39,.3);background:rgba(201,162,39,.05);font-family:var(--serif);font-size:16.5px;line-height:1.55;color:var(--paper-dim)}
+.echo span{display:block;font-family:var(--text);font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.badpaths{margin:18px 0 0;padding:12px 14px;border-left:2px solid var(--wine);background:rgba(122,43,43,.1);font-size:13px;line-height:1.5;color:#dcb9b9}
+.choice.special{border-color:rgba(201,162,39,.45);background:rgba(201,162,39,.07)}
+.choice.special .n{color:var(--gold-2)}
+.choice.special .tag{color:var(--gold-2);border-color:rgba(201,162,39,.4)}
