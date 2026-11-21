@@ -75,21 +75,58 @@ function influHtml(r, pe){
     items.map(function(t){ return '<li>'+esc(t)+'</li>'; }).join('') + '</ul></div>';
 }
 
-function flagSource(b, k){
+function flagWays(b, k){
   var p = pathOf(b); if (!p) return [];
   var out = [];
   (p.set || []).forEach(function(s){
     if (s.k !== k) return;
     var sc = b.scenes[s.si|0], o = sc && sc.o && sc.o[s.oi|0];
-    out.push({ si:s.si|0, t:(o && o[0]) || '', need:s.if || null });
+    if (!o) return;                                  // варианта нет в книге — не подсказываем
+    var t = Array.isArray(o) ? (o[0]||'') : (o.t||'');
+    if (!t) return;
+    out.push({ si:s.si|0, t:t, need:s.if || null });
   });
   (p.gate || []).forEach(function(g){
     (g.o || []).forEach(function(o){
-      if (o.k !== k) return;
-      out.push({ si:g.si|0, t:o.t || '', need:g.if || null });
+      if (o.k !== k || !o.t) return;
+      out.push({ si:g.si|0, t:o.t, need:g.if || null });
     });
   });
   return out;
+}
+
+function pushStep(chain, st){
+  var last = chain[chain.length-1];
+  if (last && last.si === st.si && last.t === st.t) return;
+  chain.push(st);
+}
+
+function flagRecipe(b, k, seen){
+  seen = seen || {};
+  if (seen[k]) return null;
+  seen[k] = 1;
+  var ways = flagWays(b, k), best = null;
+  ways.forEach(function(w){
+    var cond = w.need || {}, need = [], n;
+    for (n in cond){
+      if (!Object.prototype.hasOwnProperty.call(cond, n)) continue;
+      if ((cond[n]|0) === 1) need.push(n);
+    }
+    var chain = [], ok = true;
+    need.forEach(function(nk){
+      var sub = flagRecipe(b, nk, Object.assign({}, seen));
+      if (!sub){ ok = false; return; }
+      sub.forEach(function(st){ pushStep(chain, st); });
+    });
+    if (!ok) return;
+    pushStep(chain, w);
+    for (var q=1;q<chain.length;q++){
+      if (chain[q-1].si > chain[q].si){ ok = false; break; }
+    }
+    if (!ok) return;
+    if (!best || chain.length < best.length) best = chain;
+  });
+  return best;
 }
 
 function bestAlly(b, r){
@@ -119,9 +156,13 @@ function whatIfHtml(b, r, pe){
       if ((cond[k]|0) === 1 && !hasFlag(r, k)) miss.push(k);
     }
     var rows = miss.map(function(k){
-      var src = flagSource(b, k)[0];
-      var hint = src ? ('сцена ' + ((src.si|0)+1) + (src.t ? ': «'+src.t+'»' : '')) : 'другой путь по книге';
-      return '<li>'+esc(hint)+'</li>';
+      var rec = flagRecipe(b, k);
+      if (!rec || !rec.length) return '<li>другой путь по книге</li>';
+      var hint = rec.map(function(st){
+        return '<span class="wi-step">сцена ' + ((st.si|0)+1) + '</span>' +
+          (st.t ? ' — «'+esc(st.t)+'»' : '');
+      }).join(' <span class="wi-arr">→</span> ');
+      return '<li>'+hint+'</li>';
     }).join('');
     cards.push('<div class="wi-card"><div class="wi-name">'+esc(e.n || 'другая концовка')+'</div>' +
       (miss.length
